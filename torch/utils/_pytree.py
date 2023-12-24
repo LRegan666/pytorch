@@ -284,9 +284,7 @@ def _private_register_pytree_node(
 
 
 def _dict_flatten(d: Dict[Any, Any]) -> Tuple[List[Any], Context]:
-    sorted_keys = sorted(d)
-    sorted_values = [d[k] for k in sorted_keys]
-    return sorted_values, sorted_keys
+    return list(d.values()), list(d.keys())
 
 
 def _dict_unflatten(values: Iterable[Any], context: Context) -> Dict[Any, Any]:
