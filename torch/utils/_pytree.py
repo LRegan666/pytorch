@@ -17,6 +17,7 @@ To improve the performance we can move parts of the implementation to C++.
 
 import dataclasses
 import importlib
+import inspect
 import json
 import threading
 import warnings
@@ -474,6 +475,9 @@ def _is_leaf(tree: PyTree) -> bool:
     return _get_node_type(tree) not in SUPPORTED_NODES
 
 
+WHITELIST: FrozenSet[str] = frozenset()
+
+
 # A TreeSpec represents the structure of a pytree. It holds:
 # "type": the type of root Node of the pytree
 # context: some context that is useful in unflattening the pytree
@@ -482,7 +486,7 @@ def _is_leaf(tree: PyTree) -> bool:
 @dataclasses.dataclass
 class TreeSpec:
     type: Any
-    context: Context
+    _context: Context
     children_specs: List["TreeSpec"]
 
     num_nodes: int = dataclasses.field(init=False)
@@ -495,7 +499,7 @@ class TreeSpec:
         self.num_children = len(self.children_specs)
 
     def __repr__(self, indent: int = 0) -> str:
-        repr_prefix: str = f"TreeSpec({self.type.__name__}, {self.context}, ["
+        repr_prefix: str = f"TreeSpec({self.type.__name__}, {self._context}, ["
         children_specs_str: str = ""
         if len(self.children_specs):
             indent += 2
@@ -510,8 +514,42 @@ class TreeSpec:
         repr_suffix: str = f"{children_specs_str}])"
         return repr_prefix + repr_suffix
 
+    @property
+    def context(self) -> Context:
+        frame = inspect.currentframe()
+        assert frame is not None
+        caller_frame = frame.f_back
+        assert caller_frame is not None
+        caller_module = inspect.getmodule(caller_frame)
+        caller_module_name = (
+            caller_module.__name__ if caller_module is not None else "__main__"
+        )
+        if caller_module_name in WHITELIST:
+            warnings.warn(
+                f"treespec.context is accessed by {caller_module_name}, "
+                "which is private implementation detail.",
+                stacklevel=2,
+            )
+        else:
+            raise ValueError(
+                f"treespec.context is accessed by {caller_module_name}, "
+                "which is private implementation detail.",
+            )
+        return self._context
+
     def is_leaf(self) -> bool:
         return self.num_nodes == 1 and self.num_leaves == 1
+
+    def entries(self) -> List[Any]:
+        if self.type in STANDARD_DICT_TYPES:
+            dict_context = (
+                self._context if self.type is not defaultdict else self._context[1]
+            )
+            return dict_context  # type: ignore[no-any-return]
+        return list(range(self.num_children))
+
+    def children(self) -> List["TreeSpec"]:
+        return self.children_specs.copy()
 
     def _flatten_up_to_helper(self, tree: PyTree, subtrees: List[PyTree]) -> None:
         if self.is_leaf():
@@ -533,7 +571,7 @@ class TreeSpec:
                     f"Node arity mismatch; "
                     f"expected {self.num_children}, but got {len(child_pytrees)}.",
                 )
-            if context != self.context:
+            if context != self._context:
                 raise ValueError(
                     f"Node context mismatch for custom node type {self.type!r}.",
                 )
@@ -556,10 +594,10 @@ class TreeSpec:
 
             if both_standard_dict:  # dictionary types are compatible with each other
                 dict_context = (
-                    self.context
+                    self._context
                     if self.type is not defaultdict
                     # ignore mismatch of `default_factory` for defaultdict
-                    else self.context[1]
+                    else self._context[1]
                 )
                 expected_keys = dict_context
                 got_key_set = set(tree)
@@ -578,12 +616,12 @@ class TreeSpec:
                 flatten_fn = SUPPORTED_NODES[node_type].flatten_fn
                 child_pytrees, context = flatten_fn(tree)
                 if (
-                    context != self.context
+                    context != self._context
                     and self.type is not deque  # ignore mismatch of `maxlen` for deque
                 ):
                     raise ValueError(
                         f"Node context mismatch for node type {self.type!r}; "
-                        f"expected {self.context!r}, but got {context!r}.",  # namedtuple type mismatch
+                        f"expected {self._context!r}, but got {context!r}.",  # namedtuple type mismatch
                     )
 
         for child_pytree, child_spec in zip(child_pytrees, self.children_specs):
@@ -617,7 +655,7 @@ class TreeSpec:
             child_pytrees.append(child_spec.unflatten(leaves[start:end]))
             start = end
 
-        return unflatten_fn(child_pytrees, self.context)
+        return unflatten_fn(child_pytrees, self._context)
 
 
 class LeafSpec(TreeSpec):
@@ -998,12 +1036,12 @@ def _broadcast_to_and_flatten(tree: PyTree, treespec: TreeSpec) -> Optional[List
     child_pytrees, ctx = flatten_fn(tree)
 
     # Check if the Node is different from the spec
-    if len(child_pytrees) != len(treespec.children_specs) or ctx != treespec.context:
+    if len(child_pytrees) != treespec.num_children or ctx != treespec._context:
         return None
 
     # Recursively flatten the children
     result: List[Any] = []
-    for child, child_spec in zip(child_pytrees, treespec.children_specs):
+    for child, child_spec in zip(child_pytrees, treespec.children()):
         flat = _broadcast_to_and_flatten(child, child_spec)
         if flat is not None:
             result += flat
@@ -1057,7 +1095,7 @@ def _treespec_to_json(treespec: TreeSpec) -> _TreeSpecSchema:
 
     if serialize_node_def.to_dumpable_context is None:
         try:
-            serialized_context = json.dumps(treespec.context)
+            serialized_context = json.dumps(treespec._context)
         except TypeError as e:
             raise TypeError(
                 "Unable to serialize context. "
@@ -1065,9 +1103,9 @@ def _treespec_to_json(treespec: TreeSpec) -> _TreeSpecSchema:
                 "custom serializer using _register_pytree_node."
             ) from e
     else:
-        serialized_context = serialize_node_def.to_dumpable_context(treespec.context)
+        serialized_context = serialize_node_def.to_dumpable_context(treespec._context)
 
-    child_schemas = [_treespec_to_json(child) for child in treespec.children_specs]
+    child_schemas = [_treespec_to_json(child) for child in treespec.children()]
 
     return _TreeSpecSchema(serialized_type_name, serialized_context, child_schemas)
 
