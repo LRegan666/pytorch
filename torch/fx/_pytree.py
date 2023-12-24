@@ -84,8 +84,8 @@ register_pytree_flatten_spec(
     _tuple_flatten_spec,
     _tuple_flatten_spec_exact_match,
 )
-register_pytree_flatten_spec(  # type: ignore[arg-type]
-    namedtuple,
+register_pytree_flatten_spec(
+    namedtuple,  # type: ignore[arg-type]
     _namedtuple_flatten_spec,
     _namedtuple_flatten_spec_exact_match,
 )
