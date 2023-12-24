@@ -418,9 +418,9 @@ _private_register_pytree_node(
     namedtuple,  # type: ignore[arg-type]
     _namedtuple_flatten,
     _namedtuple_unflatten,
+    serialized_type_name="collections.namedtuple",
     to_dumpable_context=_namedtuple_serialize,
     from_dumpable_context=_namedtuple_deserialize,
-    serialized_type_name="collections.namedtuple",
 )
 _private_register_pytree_node(
     OrderedDict,
@@ -501,10 +501,10 @@ class TreeSpec:
     def __repr__(self, indent: int = 0) -> str:
         repr_prefix: str = f"TreeSpec({self.type.__name__}, {self._context}, ["
         children_specs_str: str = ""
-        if len(self.children_specs):
+        if self.num_children > 0:
             indent += 2
             children_specs_str += self.children_specs[0].__repr__(indent)
-            children_specs_str += "," if len(self.children_specs) > 1 else ""
+            children_specs_str += "," if self.num_children > 1 else ""
             children_specs_str += ",".join(
                 [
                     "\n" + " " * indent + child.__repr__(indent)
@@ -593,13 +593,10 @@ class TreeSpec:
                 )
 
             if both_standard_dict:  # dictionary types are compatible with each other
-                dict_context = (
-                    self._context
-                    if self.type is not defaultdict
-                    # ignore mismatch of `default_factory` for defaultdict
-                    else self._context[1]
-                )
-                expected_keys = dict_context
+                # Only compare the keys
+                # - ignore the key ordering
+                # - ignore mismatch of `default_factory` for defaultdict
+                expected_keys = self.entries()
                 got_key_set = set(tree)
                 expected_key_set = set(expected_keys)
                 if got_key_set != expected_key_set:
@@ -1026,7 +1023,7 @@ def _broadcast_to_and_flatten(tree: PyTree, treespec: TreeSpec) -> Optional[List
 
     if _is_leaf(tree):
         return [tree] * treespec.num_leaves
-    if isinstance(treespec, LeafSpec):
+    if treespec.is_leaf():
         return None
     node_type = _get_node_type(tree)
     if node_type != treespec.type:
@@ -1041,7 +1038,7 @@ def _broadcast_to_and_flatten(tree: PyTree, treespec: TreeSpec) -> Optional[List
 
     # Recursively flatten the children
     result: List[Any] = []
-    for child, child_spec in zip(child_pytrees, treespec.children()):
+    for child, child_spec in zip(child_pytrees, treespec.children_specs):
         flat = _broadcast_to_and_flatten(child, child_spec)
         if flat is not None:
             result += flat
@@ -1075,7 +1072,7 @@ _SUPPORTED_PROTOCOLS: Dict[int, _ProtocolFn] = {}
 
 
 def _treespec_to_json(treespec: TreeSpec) -> _TreeSpecSchema:
-    if isinstance(treespec, LeafSpec):
+    if treespec.is_leaf():
         return _TreeSpecSchema(None, None, [])
 
     if treespec.type not in SUPPORTED_SERIALIZED_TYPES:
@@ -1105,7 +1102,7 @@ def _treespec_to_json(treespec: TreeSpec) -> _TreeSpecSchema:
     else:
         serialized_context = serialize_node_def.to_dumpable_context(treespec._context)
 
-    child_schemas = [_treespec_to_json(child) for child in treespec.children()]
+    child_schemas = [_treespec_to_json(child) for child in treespec.children_specs]
 
     return _TreeSpecSchema(serialized_type_name, serialized_context, child_schemas)
 
@@ -1116,7 +1113,7 @@ def _json_to_treespec(json_schema: DumpableContext) -> TreeSpec:
         and json_schema["context"] is None
         and len(json_schema["children_spec"]) == 0
     ):
-        return LeafSpec()
+        return _LEAF_SPEC
 
     if json_schema["type"] not in SERIALIZED_TYPE_TO_PYTHON_TYPE:
         raise NotImplementedError(
@@ -1138,11 +1135,11 @@ def _json_to_treespec(json_schema: DumpableContext) -> TreeSpec:
     else:
         context = serialize_node_def.from_dumpable_context(json_schema["context"])
 
-    children_spec = []
+    children_specs = []
     for child_string in json_schema["children_spec"]:
-        children_spec.append(_json_to_treespec(child_string))
+        children_specs.append(_json_to_treespec(child_string))
 
-    return TreeSpec(typ, context, children_spec)
+    return TreeSpec(typ, context, children_specs)
 
 
 _SUPPORTED_PROTOCOLS[1] = _ProtocolFn(_treespec_to_json, _json_to_treespec)
