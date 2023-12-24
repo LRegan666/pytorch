@@ -15,16 +15,19 @@
 
 namespace {
 
-void test_aoti(const std::string& device) {
+void test_aoti(const std::string& device, bool use_runtime_constant_folding) {
   torch::NoGradGuard no_grad;
 
   std::string data_path =
       (std::filesystem::path(STRINGIZE(CMAKE_CURRENT_BINARY_DIR)) / "data.pt")
            .string();
   torch::jit::script::Module data_loader = torch::jit::load(data_path);
-  std::string path_attr = "model_so_path_" + device;
-  std::string inputs_attr = "inputs_" + device;
-  std::string outputs_attr = "outputs_" + device;
+  std::string suffix = use_runtime_constant_folding
+      ? device + "_use_runtime_constant_folding"
+      : device;
+  std::string path_attr = "model_so_path_" + suffix;
+  std::string inputs_attr = "inputs_" + suffix;
+  std::string outputs_attr = "outputs_" + suffix;
   const auto& model_so_path = data_loader.attr(path_attr.c_str()).toStringRef();
   auto input_tensors =
       data_loader.attr(inputs_attr.c_str()).toTensorList().vec();
@@ -72,7 +75,9 @@ void test_aoti_script(const std::string& device) {
   }
 }
 
-void test_aoti_constants_update(const std::string& device) {
+void test_aoti_constants_update(
+    const std::string& device,
+    bool use_runtime_constant_folding) {
   torch::NoGradGuard no_grad;
 
   std::string data_path =
@@ -80,11 +85,14 @@ void test_aoti_constants_update(const std::string& device) {
            .string();
 
   torch::jit::script::Module data_loader = torch::jit::load(data_path);
-  std::string path_attr = "model_so_path_" + device;
-  std::string inputs_attr = "inputs_" + device;
-  std::string outputs_attr = "outputs_" + device;
-  std::string weights_attr = "fc_weight_" + device;
-  std::string bias_attr = "fc_bias_" + device;
+  std::string suffix = use_runtime_constant_folding
+      ? device + "_use_runtime_constant_folding"
+      : device;
+  std::string path_attr = "model_so_path_" + suffix;
+  std::string inputs_attr = "inputs_" + suffix;
+  std::string outputs_attr = "outputs_" + suffix;
+  std::string weights_attr = "fc_weight_" + suffix;
+  std::string bias_attr = "fc_bias_" + suffix;
   const auto& model_so_path = data_loader.attr(path_attr.c_str()).toStringRef();
   auto input_tensors =
       data_loader.attr(inputs_attr.c_str()).toTensorList().vec();
@@ -140,7 +148,9 @@ void test_aoti_constants_update(const std::string& device) {
       torch::allclose(ref_output_tensors[0], actual_output_tensors[0]));
 }
 
-void test_aoti_double_buffering(const std::string& device) {
+void test_aoti_double_buffering(
+    const std::string& device,
+    bool use_runtime_constant_folding) {
   torch::NoGradGuard no_grad;
 
   std::string data_path =
@@ -148,11 +158,14 @@ void test_aoti_double_buffering(const std::string& device) {
            .string();
 
   torch::jit::script::Module data_loader = torch::jit::load(data_path);
-  std::string path_attr = "model_so_path_" + device;
-  std::string inputs_attr = "inputs_" + device;
-  std::string outputs_attr = "outputs_" + device;
-  std::string weights_attr = "fc_weight_" + device;
-  std::string bias_attr = "fc_bias_" + device;
+  std::string suffix = use_runtime_constant_folding
+      ? device + "_use_runtime_constant_folding"
+      : device;
+  std::string path_attr = "model_so_path_" + suffix;
+  std::string inputs_attr = "inputs_" + suffix;
+  std::string outputs_attr = "outputs_" + suffix;
+  std::string weights_attr = "fc_weight_" + suffix;
+  std::string bias_attr = "fc_bias_" + suffix;
   const auto& model_so_path = data_loader.attr(path_attr.c_str()).toStringRef();
   auto input_tensors =
       data_loader.attr(inputs_attr.c_str()).toTensorList().vec();
@@ -214,7 +227,7 @@ namespace torch {
 namespace inductor {
 
 TEST(AotInductorTest, BasicTestCpu) {
-  test_aoti("cpu");
+  test_aoti("cpu", false);
 }
 
 TEST(AotInductorTest, BasicScriptTestCpu) {
@@ -223,7 +236,7 @@ TEST(AotInductorTest, BasicScriptTestCpu) {
 
 #ifdef USE_CUDA
 TEST(AotInductorTest, BasicTestCuda) {
-  test_aoti("cuda");
+  test_aoti("cuda", false);
 }
 
 TEST(AotInductorTest, BasicScriptTestCuda) {
@@ -231,11 +244,11 @@ TEST(AotInductorTest, BasicScriptTestCuda) {
 }
 
 TEST(AotInductorTest, UpdateConstantsCuda) {
-  test_aoti_constants_update("cuda");
+  test_aoti_constants_update("cuda", false);
 }
 
 TEST(AotInductorTest, UpdateInactiveConstantsCuda) {
-  test_aoti_double_buffering("cuda");
+  test_aoti_double_buffering("cuda", false);
 }
 #endif
 
